@@ -90,10 +90,14 @@ CREATE TABLE users (
 
 ```sql
 -- ❌ TIMESTAMP stores local time — wrong across DST and deployments in different zones
-created_at TIMESTAMP DEFAULT NOW()
+CREATE TABLE bad_events (
+  created_at TIMESTAMP DEFAULT NOW()
+);
 
 -- ✅ TIMESTAMPTZ stores UTC, displays in any timezone correctly
-created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+CREATE TABLE events (
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 ```
 
 ---
@@ -137,16 +141,23 @@ SELECT * FROM orders WHERE user_id = $1 AND deleted_at IS NULL;
 
 ```sql
 -- ❌ SERIAL = 32-bit integer. Runs out at 2.1 billion rows. Exposes row count.
-id SERIAL PRIMARY KEY
+CREATE TABLE small_ids (
+  id SERIAL PRIMARY KEY
+);
 
 -- ✅ BIGSERIAL for ordered, high-volume tables
-id BIGSERIAL PRIMARY KEY  -- 9.2 × 10^18 max
+CREATE TABLE ordered_ids (
+  id BIGSERIAL PRIMARY KEY  -- 9.2 × 10^18 max
+);
 
--- ✅ UUID v7 for distributed systems, public APIs (doesn't expose sequence)
-id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+-- ✅ UUID v4 for distributed systems and public APIs (doesn't expose sequence)
+CREATE TABLE public_ids (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+);
 
 -- ✅ Or UUIDv7 (time-ordered, better for indexes than v4)
--- Available in PG 17+ natively, or use extension
+-- Available natively as uuidv7() in PostgreSQL 18+; use an extension or app-side
+-- generation on earlier supported versions.
 ```
 
 ---

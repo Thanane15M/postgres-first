@@ -20,7 +20,8 @@ redis-cli --scan --pattern '*'   # list all keys (careful on prod)
 redis-cli info commandstats      # which commands dominate
 ```
 
-Common finding: 80% of Redis usage is cache + session. Both replaceable in < 1 day.
+Classify each Redis keyspace by durability, TTL, throughput, atomicity, and replay
+requirements before deciding whether PostgreSQL is an appropriate replacement.
 
 ### Step 2 — Replace cache
 
@@ -312,7 +313,8 @@ async def worker(pool: asyncpg.Pool):
                     UPDATE job_queue
                     SET status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'retrying' END,
                         error = $2,
-                        run_at = NOW() + INTERVAL '1 second' * POWER(2, attempts)
+                        run_at = NOW() + INTERVAL '1 second' * POWER(2, attempts),
+                        finished_at = CASE WHEN attempts >= max_attempts THEN NOW() ELSE NULL END
                     WHERE id = $1
                 """, job['id'], str(e))
 ```

@@ -1,11 +1,11 @@
 ---
 name: postgres-first
 description: >
-  PostgreSQL-First Architecture — radical stack simplification expert.
+  PostgreSQL-First Architecture — evidence-based stack simplification expert.
   Activate whenever a project mentions a database, cache, queue, search engine,
   vector store, background jobs, pub/sub, rate limiting, audit trails, or any
-  backend infrastructure. Replaces Redis, MongoDB, Elasticsearch, Pinecone,
-  RabbitMQ, Celery, n8n, and 20+ SaaS services with native PostgreSQL patterns.
+  backend infrastructure. Evaluates when PostgreSQL can replace Redis, MongoDB,
+  Elasticsearch, Pinecone, RabbitMQ, Celery, n8n, or other infrastructure.
   Trigger phrases: "what cache should I use", "which queue", "I need a search
   engine", "vector database", "background jobs", "simplify my stack", "audit my
   architecture", "migrate from Redis/Mongo/n8n", "too many services", "how to
@@ -14,30 +14,28 @@ description: >
 
 # PostgreSQL-First Architecture
 
-> **"Every external service is a deployment, a bill, a 3am page, and a skill gap to hire for.  
-> PostgreSQL already does it. Use it."**
+> **Every external service adds deployment, cost, failure modes, and operational load.
+> Add one when measured requirements exceed the PostgreSQL design.**
 
-**This skill makes one argument, relentlessly:** for 95% of applications at 95% of companies,
-PostgreSQL can replace every data infrastructure service you think you need. This is not theory.
-It is documented practice from production systems.
+This skill provides PostgreSQL-native patterns and explicit exit criteria. It is
+not a claim that one database fits every workload. Benchmark the actual access
+pattern and preserve specialized systems when they provide required semantics.
 
 ---
 
-## RULE ZERO — The Scale Test
+## RULE ZERO — The Evidence Test
 
-Before recommending any external service, answer these three questions:
+Before recommending or removing an external service, collect this evidence:
 
-| Question | Threshold for external service |
+| Dimension | Evidence required |
 |---|---|
-| **Request rate** | > 50,000 req/sec *sustained* on this specific operation? |
-| **Team size** | > 8 engineers with dedicated infra capacity? |
-| **Regulatory requirement** | Does compliance mandate service isolation? |
+| **Performance** | Peak throughput, p95/p99 latency, data size, query shape, growth margin |
+| **Semantics** | Ordering, replay, fan-out, durability, availability and consistency needs |
+| **Operations** | Blast radius, restore time, staffing, compliance, regional and cost constraints |
 
-**If 2+ answers are NO → PostgreSQL native. No discussion.**
-
-Most teams that think they need Redis have < 5,000 req/sec and 3 engineers.
-Most teams that think they need Elasticsearch have < 100,000 documents.
-Most teams that think they need Kafka have < 10,000 events/sec.
+Prefer PostgreSQL when a load test and failure-mode review show that it meets the
+service-level objective with headroom. Keep or introduce a specialized service
+when it provides semantics or isolation PostgreSQL cannot meet economically.
 
 The replacement matrix below covers each case.
 
@@ -59,7 +57,7 @@ CREATE TABLE entities (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- GIN index: makes ANY key inside data queryable at ~2ms
+-- GIN index: supports indexed JSONB containment queries; benchmark your dataset.
 CREATE INDEX idx_entities_data  ON entities USING GIN (data);
 CREATE INDEX idx_entities_type  ON entities (type, created_at DESC);
 CREATE INDEX idx_entities_tenant ON entities (tenant_id, type);
@@ -145,7 +143,8 @@ UPDATE job_queue SET status = 'done', finished_at = NOW() WHERE id = $1;
 UPDATE job_queue
 SET status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'retrying' END,
     error = $2,
-    run_at = NOW() + (INTERVAL '1 second' * POWER(2, attempts))  -- 2s, 4s, 8s, 16s...
+    run_at = NOW() + (INTERVAL '1 second' * POWER(2, attempts)), -- 2s, 4s, 8s, 16s...
+    finished_at = CASE WHEN attempts >= max_attempts THEN NOW() ELSE NULL END
 WHERE id = $1
 RETURNING status;
 
@@ -179,6 +178,8 @@ SELECT cron.schedule('heartbeat', '*/5 * * * *',
 -- Replaces: Redis cache, Memcached, Varnish
 
 -- Ephemeral key-value cache (no WAL = maximum write speed)
+-- UNLOGGED tables are truncated after a crash and are not replicated to standbys.
+-- Use only for reconstructible data.
 CREATE UNLOGGED TABLE cache (
   key        TEXT PRIMARY KEY,
   value      JSONB NOT NULL,
@@ -305,7 +306,8 @@ CREATE TABLE embeddings (
   UNIQUE (source_type, source_id, chunk_index)
 );
 
--- HNSW index: sub-millisecond ANN search at millions of vectors
+-- HNSW index: approximate nearest-neighbor search; benchmark recall, build time,
+-- memory, and p95 latency on your own vector count and dimensions.
 CREATE INDEX idx_embeddings_hnsw ON embeddings
   USING hnsw (embedding vector_cosine_ops)
   WITH (m = 16, ef_construction = 64);        -- tune m for recall vs speed
@@ -368,6 +370,10 @@ CREATE TRIGGER trg_orders_notify
   FOR EACH ROW EXECUTE FUNCTION notify_order_change();
 ```
 
+`LISTEN/NOTIFY` is a transient wake-up signal, not a durable queue: payloads are
+delivered after commit, are not replayed for disconnected consumers, and should
+normally point listeners to durable rows stored in a table.
+
 ```python
 # Python listener (asyncpg) — replaces Redis subscriber
 import asyncio, asyncpg, json
@@ -392,16 +398,18 @@ def handle(payload: str):
 ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
 ALTER TABLE users    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+ALTER TABLE invoices FORCE ROW LEVEL SECURITY;
 
 -- Tenant isolation: each row is owned by a tenant
 CREATE POLICY tenant_isolation ON invoices
-  USING (tenant_id = current_setting('app.tenant_id')::uuid);
+  USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
+  WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
 
 -- Role-based access within a tenant
 CREATE POLICY role_write ON invoices
   FOR INSERT WITH CHECK (
-    current_setting('app.tenant_id')::uuid = tenant_id AND
-    current_setting('app.role') IN ('admin', 'accountant')
+    NULLIF(current_setting('app.tenant_id', true), '')::uuid = tenant_id AND
+    current_setting('app.role', true) IN ('admin', 'accountant')
   );
 
 -- Application sets context before every query:
@@ -422,10 +430,10 @@ CREATE INDEX idx_users_tenant    ON users (tenant_id);
 
 -- Automatic history on any table
 CREATE TABLE orders_history (LIKE orders INCLUDING ALL);
-ALTER TABLE orders_history ADD COLUMN
-  changed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  changed_by  TEXT,
-  change_type TEXT CHECK (change_type IN ('INSERT','UPDATE','DELETE'));
+ALTER TABLE orders_history
+  ADD COLUMN changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ADD COLUMN changed_by TEXT,
+  ADD COLUMN change_type TEXT CHECK (change_type IN ('INSERT','UPDATE','DELETE'));
 
 CREATE OR REPLACE FUNCTION audit_orders() RETURNS TRIGGER AS $$
 BEGIN
@@ -477,16 +485,16 @@ When reviewing an existing system:
 
 ```
 □ How many distinct data services? (target: ≤ 2)
-□ Is Redis used only for cache/session? → Replace with UNLOGGED TABLE
-□ Is Redis used for queues? → Replace with FOR UPDATE SKIP LOCKED
+□ Is Redis used only for reconstructible cache/session data? → Evaluate UNLOGGED TABLE
+□ Is Redis used for a modest durable work queue? → Evaluate FOR UPDATE SKIP LOCKED
 □ Is MongoDB used for flexible schema? → Replace with JSONB
 □ Is Elasticsearch used for < 10M docs? → Replace with tsvector + pg_trgm
-□ Is Pinecone/Chroma used? → Replace with pgvector
-□ Are n8n/Celery/Airflow used for simple jobs? → Replace with pg_cron + job_queue
+□ Is Pinecone/Chroma used? → Benchmark pgvector against current recall and latency
+□ Are n8n/Celery/Airflow used for simple jobs? → Evaluate pg_cron + job_queue
 □ Is RLS enabled on all tenant-scoped tables?
 □ Is pg_cron installed for recurring tasks?
 □ Are Materialized Views used instead of app-level caching?
-□ Is LISTEN/NOTIFY used for real-time instead of external pub/sub?
+□ Is LISTEN/NOTIFY used only for transient wake-ups backed by durable rows?
 □ Are partial indexes used on filtered queries?
 □ Is BRIN used on append-only timestamp columns?
 □ Is connection pooling configured (PgBouncer in transaction mode)?

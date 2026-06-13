@@ -2,23 +2,25 @@
 
 # postgres-first
 
-You don't need Redis. You don't need n8n. You don't need Elasticsearch, MongoDB, or Pinecone.
-You need to actually read the PostgreSQL documentation.
+You may not need Redis, n8n, Elasticsearch, MongoDB, or Pinecone yet.
+Measure the workload first, then use PostgreSQL where it meets the reliability,
+latency, durability, and operational requirements.
 
 Most teams that think they need six services have three engineers and forty thousand rows.
 This skill documents what PostgreSQL already does — with production SQL, not blog posts.
 
 ## The Rule Zero
 
-Before adding any external service, answer three questions:
+Before adding any external service, measure these dimensions:
 
-| Question | External service threshold |
+| Dimension | Evidence to collect |
 |---|---|
-| Request rate on this specific operation | > 50,000 req/sec sustained? |
-| Team size with dedicated infra capacity | > 8 engineers? |
-| Compliance mandate for service isolation | Yes? |
+| Throughput and tail latency | Sustained load test at expected peak and growth margin |
+| Durability and delivery semantics | Loss tolerance, ordering, replay, retention, recovery |
+| Operational and compliance needs | Isolation, blast radius, skills, cost, regional constraints |
 
-Two or more NO answers: PostgreSQL native. No discussion.
+Start with PostgreSQL when it satisfies those measured requirements. Split out a
+specialized service only when evidence justifies the added operational cost.
 
 ## What's inside
 
@@ -31,18 +33,17 @@ Two or more NO answers: PostgreSQL native. No discussion.
 
 ## The origin
 
-Cyclone Chido hit Mayotte on December 14, 2024. 87% of revenue gone in four hours.
-Every external service was a dependency that could fail. Redis, n8n, Elasticsearch — all of it.
-The rebuild took 41 hours. The lesson was simple: fewer services, more resilience.
-These patterns are what remained.
+Cyclone Chido exposed how infrastructure dependencies amplify recovery work.
+The lesson was simple: fewer justified services can mean a smaller failure surface.
+These patterns capture that approach without treating PostgreSQL as a universal answer.
 
 ## Install
 
 ```bash
-claude skill install https://github.com/Thanane15M/postgres-first
+git clone https://github.com/Thanane15M/postgres-first.git
 ```
 
-Or copy `SKILL.md` directly into your project's `.claude/skills/postgres-first/` folder.
+Copy `SKILL.md` and the reference directories into your agent's local skills directory.
 
 ## License
 

@@ -208,11 +208,13 @@ LIMIT 20;
 
 -- Next page (pass last row's created_at and id as cursor):
 SELECT id, amount, created_at FROM orders
-WHERE (created_at, id) < ($last_created_at, $last_id)  -- cursor condition
+WHERE (created_at, id) < ($1, $2)  -- cursor: last created_at, last id
 ORDER BY created_at DESC, id DESC
 LIMIT 20;
+```
 
 -- For APIs: return cursor in response
+```json
 {
   "data": [...],
   "next_cursor": "2025-01-15T10:30:00Z__42891"
