@@ -1,540 +1,169 @@
 ---
 name: postgres-first
 description: >
-  PostgreSQL-First Architecture — evidence-based stack simplification expert.
-  Activate whenever a project mentions a database, cache, queue, search engine,
-  vector store, background jobs, pub/sub, rate limiting, audit trails, or any
-  backend infrastructure. Evaluates when PostgreSQL can replace Redis, MongoDB,
-  Elasticsearch, Pinecone, RabbitMQ, Celery, n8n, or other infrastructure.
-  Trigger phrases: "what cache should I use", "which queue", "I need a search
-  engine", "vector database", "background jobs", "simplify my stack", "audit my
-  architecture", "migrate from Redis/Mongo/n8n", "too many services", "how to
-  do full-text search", "rate limiting", "multi-tenant", "row level security".
+  Evaluates whether PostgreSQL can satisfy database, cache, queue, search, vector,
+  background-job, pub/sub, rate-limit, audit, or multi-tenant requirements before
+  adding another data service. Use when designing or simplifying backend
+  architecture, reviewing Redis/MongoDB/Elasticsearch/vector-store usage, or
+  planning a migration toward PostgreSQL-native patterns.
 ---
 
 # PostgreSQL-First Architecture
 
-> **Every external service adds deployment, cost, failure modes, and operational load.
-> Add one when measured requirements exceed the PostgreSQL design.**
+Use PostgreSQL first **only when measured requirements show it is sufficient**.
+This skill is an evidence gate, not a mandate to replace every specialized system.
 
-This skill provides PostgreSQL-native patterns and explicit exit criteria. It is
-not a claim that one database fits every workload. Benchmark the actual access
-pattern and preserve specialized systems when they provide required semantics.
+## Non-negotiable rule
 
----
+Before adding, removing, or replacing a data service, collect evidence for:
 
-## RULE ZERO — The Evidence Test
+1. **Performance** — expected peak throughput, p95/p99 latency, data size, query shape, growth margin.
+2. **Semantics** — ordering, replay, fan-out, durability, delivery guarantees, consistency and availability needs.
+3. **Operations** — blast radius, restore objectives, team skill, regional/compliance constraints, cost and failure isolation.
 
-Before recommending or removing an external service, collect this evidence:
+If these are unknown, classify the decision as `NOT_PROVEN`; do not claim that PostgreSQL is sufficient.
 
-| Dimension | Evidence required |
-|---|---|
-| **Performance** | Peak throughput, p95/p99 latency, data size, query shape, growth margin |
-| **Semantics** | Ordering, replay, fan-out, durability, availability and consistency needs |
-| **Operations** | Blast radius, restore time, staffing, compliance, regional and cost constraints |
+## Decision workflow
 
-Prefer PostgreSQL when a load test and failure-mode review show that it meets the
-service-level objective with headroom. Keep or introduce a specialized service
-when it provides semantics or isolation PostgreSQL cannot meet economically.
+### 1. Identify the workload
 
-The replacement matrix below covers each case.
+Classify the requirement before choosing infrastructure:
 
----
+| Workload | PostgreSQL-native candidate | Keep/split a specialist when… |
+|---|---|---|
+| Flexible documents | `JSONB` + GIN | access patterns or scale are proven unsuitable |
+| Durable work queue | row table + `FOR UPDATE SKIP LOCKED` | broker semantics, partition isolation, replay/fan-out or throughput require it |
+| Cache | ordinary/unlogged tables, materialized views | latency or independent failure isolation requires an external cache |
+| Full-text/fuzzy search | `tsvector`, GIN, `pg_trgm` | relevance, indexing scale or search features exceed measured targets |
+| Vector retrieval | `pgvector` | measured recall/latency/cost justify a dedicated vector service |
+| Schedules | `pg_cron` + durable jobs | orchestration graph complexity or execution isolation requires a workflow engine |
+| Pub/sub wake-ups | `LISTEN/NOTIFY` backed by durable rows | durable streams, replay or large fan-out are required |
+| Rate limits | atomic counters/window tables | global edge latency or extremely high write rates require another store |
+| Audit trail | append-only relational tables | regulatory isolation or immutable external retention requires another system |
 
-## THE COMPLETE REPLACEMENT MATRIX
+### 2. Define the SLO and exit criteria
 
-### 1. Document Store / NoSQL → `JSONB`
+Write the boundary before implementation. Example:
+
+```text
+queue_slo:
+  sustained_jobs_per_second: 250
+  p99_claim_latency_ms: 100
+  replay_required: false
+  cross_region_active_active: false
+  max_recovery_time_minutes: 15
+
+exit_to_specialist_if:
+  - p99 exceeds target under representative load
+  - database contention harms transactional workloads
+  - required semantics cannot be implemented economically
+```
+
+### 3. Benchmark the representative path
+
+Do not substitute row-count folklore or generic CPU formulas for measurement.
+Connection counts, pool sizes, partition thresholds, cache policies and indexes are workload-specific.
+Use `EXPLAIN (ANALYZE, BUFFERS)`, `pg_stat_statements`, realistic concurrency, and failure tests.
+
+### 4. Test failure modes
+
+At minimum, test:
+
+- worker crash after claim and before completion;
+- duplicate delivery/idempotency;
+- transaction rollback;
+- lock contention;
+- pool exhaustion;
+- restore/recovery path for durable state;
+- tenant isolation when RLS is used;
+- degradation of the primary workload when auxiliary work grows.
+
+### 5. Record the decision
+
+Return one of:
+
+- `VERIFIED_POSTGRES_FIT` — representative tests meet explicit requirements with headroom.
+- `PARTIAL` — promising pattern, incomplete evidence.
+- `KEEP_SPECIALIST` — a specialist provides required semantics/isolation economically.
+- `NOT_PROVEN` — requirements or runtime evidence are missing.
+
+Never use `production-ready` as a synonym for “the SQL parses.”
+
+## Core patterns
+
+### Durable queue
+
+Use a durable row as the source of truth and claim work transactionally:
 
 ```sql
--- Replaces: MongoDB, DynamoDB, Firestore, CouchDB
-
-CREATE TABLE entities (
-  id          BIGSERIAL PRIMARY KEY,
-  tenant_id   UUID NOT NULL,                    -- multi-tenant from birth
-  type        TEXT NOT NULL,                    -- your "collection" name
-  data        JSONB NOT NULL DEFAULT '{}',
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- GIN index: supports indexed JSONB containment queries; benchmark your dataset.
-CREATE INDEX idx_entities_data  ON entities USING GIN (data);
-CREATE INDEX idx_entities_type  ON entities (type, created_at DESC);
-CREATE INDEX idx_entities_tenant ON entities (tenant_id, type);
-
--- Query any field without schema migration
-SELECT * FROM entities
-WHERE type = 'invoice'
-  AND data @> '{"status": "paid", "currency": "EUR"}'
-  AND tenant_id = 'acme-corp-uuid';
-
--- Nested update without fetching the document
-UPDATE entities
-SET data = jsonb_set(data, '{address,city}', '"Paris"'),
-    updated_at = NOW()
-WHERE id = 42;
-
--- Aggregate inside JSONB (replaces aggregation pipelines)
-SELECT
-  data->>'country' AS country,
-  COUNT(*) AS count,
-  SUM((data->>'amount')::numeric) AS total
-FROM entities
-WHERE type = 'order'
-GROUP BY data->>'country'
-ORDER BY total DESC;
-```
-
-**MongoDB query mapping:**
-```
-db.find({status: "paid"})          → WHERE data @> '{"status":"paid"}'
-db.find({amount: {$gt: 100}})      → WHERE (data->>'amount')::numeric > 100
-db.updateOne({}, {$set: {x: 1}})   → UPDATE SET data = jsonb_set(data, '{x}', '1')
-db.aggregate([{$group: {_id: "$x"}}]) → GROUP BY data->>'x'
-```
-
----
-
-### 2. Message Queue / Background Jobs → `FOR UPDATE SKIP LOCKED`
-
-```sql
--- Replaces: Redis + BullMQ, RabbitMQ + Celery, SQS, n8n queues
-
-CREATE TABLE job_queue (
-  id           BIGSERIAL PRIMARY KEY,
-  queue        TEXT NOT NULL DEFAULT 'default',
-  payload      JSONB NOT NULL,
-  status       TEXT NOT NULL DEFAULT 'pending'
-               CHECK (status IN ('pending','processing','done','failed','retrying')),
-  priority     INT NOT NULL DEFAULT 0,          -- higher = more urgent
-  attempts     SMALLINT NOT NULL DEFAULT 0,
-  max_attempts SMALLINT NOT NULL DEFAULT 3,
-  error        TEXT,                            -- last error message
-  run_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  started_at   TIMESTAMPTZ,
-  finished_at  TIMESTAMPTZ,
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
--- Partial index: only pending jobs, keeps index tiny
-CREATE INDEX idx_jobs_dequeue ON job_queue (queue, priority DESC, run_at)
-  WHERE status IN ('pending', 'retrying');
-
--- Worker: atomically claim one job (race-condition proof, no distributed lock needed)
 WITH claimed AS (
-  SELECT id FROM job_queue
-  WHERE queue = 'default'
-    AND status IN ('pending', 'retrying')
-    AND run_at <= NOW()
-  ORDER BY priority DESC, run_at
+  SELECT id
+  FROM job_queue
+  WHERE status IN ('pending', 'retrying')
+    AND run_at <= now()
+  ORDER BY priority DESC, run_at, id
   LIMIT 1
-  FOR UPDATE SKIP LOCKED          -- other workers skip this row instantly
+  FOR UPDATE SKIP LOCKED
 )
-UPDATE job_queue
-SET status = 'processing', started_at = NOW(), attempts = attempts + 1
+UPDATE job_queue AS q
+SET status = 'processing',
+    started_at = now(),
+    attempts = attempts + 1
 FROM claimed
-WHERE job_queue.id = claimed.id
-RETURNING *;
-
--- Mark done
-UPDATE job_queue SET status = 'done', finished_at = NOW() WHERE id = $1;
-
--- Retry with exponential backoff on failure
-UPDATE job_queue
-SET status = CASE WHEN attempts >= max_attempts THEN 'failed' ELSE 'retrying' END,
-    error = $2,
-    run_at = NOW() + (INTERVAL '1 second' * POWER(2, attempts)), -- 2s, 4s, 8s, 16s...
-    finished_at = CASE WHEN attempts >= max_attempts THEN NOW() ELSE NULL END
-WHERE id = $1
-RETURNING status;
-
--- Dead letter queue: jobs that exhausted retries
-SELECT * FROM job_queue
-WHERE status = 'failed'
-ORDER BY finished_at DESC;
+WHERE q.id = claimed.id
+RETURNING q.*;
 ```
 
-**Schedule recurring jobs with `pg_cron`:**
-```sql
--- Replaces: Celery beat, n8n schedules, cron daemons, APScheduler
-CREATE EXTENSION IF NOT EXISTS pg_cron;
+`SKIP LOCKED` is appropriate for queue-like consumers; it intentionally does not provide a consistent general-purpose snapshot.
 
--- Run daily at 02:00 UTC
-SELECT cron.schedule('nightly-cleanup', '0 2 * * *',
-  $$DELETE FROM job_queue WHERE status = 'done' AND finished_at < NOW() - INTERVAL '7 days'$$
-);
+### Idempotency
 
--- Every 5 minutes
-SELECT cron.schedule('heartbeat', '*/5 * * * *',
-  $$INSERT INTO job_queue (queue, payload) VALUES ('monitoring', '{"type":"heartbeat"}')$$
-);
-```
-
----
-
-### 3. Cache → `UNLOGGED TABLE` + `MATERIALIZED VIEW`
+Use a unique business/idempotency key rather than an in-memory duplicate guard:
 
 ```sql
--- Replaces: Redis cache, Memcached, Varnish
-
--- Ephemeral key-value cache (no WAL = maximum write speed)
--- UNLOGGED tables are truncated after a crash and are not replicated to standbys.
--- Use only for reconstructible data.
-CREATE UNLOGGED TABLE cache (
-  key        TEXT PRIMARY KEY,
-  value      JSONB NOT NULL,
-  expires_at TIMESTAMPTZ NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_cache_expires ON cache (expires_at);
-
--- Set with TTL
-INSERT INTO cache (key, value, expires_at)
-VALUES ($1, $2, NOW() + $3::INTERVAL)
-ON CONFLICT (key) DO UPDATE
-  SET value = EXCLUDED.value, expires_at = EXCLUDED.expires_at;
-
--- Get (returns NULL if expired)
-SELECT value FROM cache
-WHERE key = $1 AND expires_at > NOW();
-
--- Cleanup (run via pg_cron every hour)
-DELETE FROM cache WHERE expires_at < NOW();
-
--- For heavy computed results: Materialized View (refreshed concurrently)
-CREATE MATERIALIZED VIEW mv_dashboard_stats AS
-SELECT
-  date_trunc('day', created_at) AS day,
-  COUNT(*)                       AS new_users,
-  SUM(amount)                    AS revenue,
-  AVG(response_time_ms)          AS avg_response_ms
-FROM events
-WHERE created_at > NOW() - INTERVAL '30 days'
-GROUP BY 1
-WITH DATA;
-
-CREATE UNIQUE INDEX ON mv_dashboard_stats (day);
-
--- Refresh without locking reads (CONCURRENTLY requires unique index)
-REFRESH MATERIALIZED VIEW CONCURRENTLY mv_dashboard_stats;
+INSERT INTO processed_events (idempotency_key, payload)
+VALUES ($1, $2)
+ON CONFLICT (idempotency_key) DO NOTHING
+RETURNING id;
 ```
 
-**Rate limiting (replaces Redis INCR + EXPIRE):**
-```sql
-CREATE TABLE rate_limits (
-  key         TEXT NOT NULL,
-  window_start TIMESTAMPTZ NOT NULL,
-  count       INT NOT NULL DEFAULT 1,
-  PRIMARY KEY (key, window_start)
-);
+No returned row means the event was already accepted.
 
--- Atomic increment, returns current count
-INSERT INTO rate_limits (key, window_start, count)
-VALUES ($1, date_trunc('minute', NOW()), 1)
-ON CONFLICT (key, window_start) DO UPDATE
-  SET count = rate_limits.count + 1
-RETURNING count;
--- If returned count > limit → reject request
-```
+### Cache
 
----
+Use reconstructible cache tables only when losing them is acceptable. `UNLOGGED` tables are not durable and are not replicated to standbys; never use them for authoritative state.
 
-### 4. Full-Text & Fuzzy Search → `tsvector` + `pg_trgm`
+### Search
 
-```sql
--- Replaces: Elasticsearch, Algolia, Typesense, MeiliSearch, Solr
+Start with PostgreSQL search when the corpus and relevance requirements fit. Benchmark before replacing a dedicated search engine; do not use document count alone as an exit threshold.
 
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE EXTENSION IF NOT EXISTS unaccent;
+### Observability
 
--- Generated column: auto-updated on every write
-ALTER TABLE products ADD COLUMN search_vec TSVECTOR
-  GENERATED ALWAYS AS (
-    setweight(to_tsvector('english', coalesce(name, '')),       'A') ||
-    setweight(to_tsvector('english', coalesce(description, '')), 'B') ||
-    setweight(to_tsvector('english', coalesce(tags::text, '')), 'C')
-  ) STORED;
+Enable `pg_stat_statements` when the platform supports it, then measure planning/execution statistics and query concentration. Remember that it requires `shared_preload_libraries` and a server restart to add or remove.
 
-CREATE INDEX idx_products_fts  ON products USING GIN (search_vec);
-CREATE INDEX idx_products_trgm ON products USING GIN (name gin_trgm_ops);
+## Guardrails
 
--- Full-text search with ranking
-SELECT
-  id, name,
-  ts_rank(search_vec, query)    AS rank,
-  ts_headline('english', description, query,
-    'MaxWords=20,MinWords=5')   AS excerpt
-FROM products, websearch_to_tsquery('english', $1) AS query
-WHERE search_vec @@ query
-ORDER BY rank DESC, name
-LIMIT 20;
+- PostgreSQL is not a CDN, email deliverability platform, model-serving runtime, or universal event log.
+- `LISTEN/NOTIFY` is a wake-up signal, not durable storage.
+- Queue rows need retry, timeout/reaper, dead-letter and idempotency semantics.
+- Multi-tenant examples need explicit RLS policies and tests under a non-bypass role.
+- `pg_cron`, `pgvector`, `pg_partman`, PostGIS and similar extensions are deployment capabilities, not assumptions.
+- Managed PostgreSQL providers may restrict extensions and superuser operations.
+- A simpler stack is valuable only if it still meets reliability and recovery requirements.
 
--- Fuzzy search: handles typos ("javascrpit" → "javascript")
-SELECT name, similarity(name, $1) AS sim
-FROM products
-WHERE name % $1             -- pg_trgm operator: similar
-ORDER BY sim DESC
-LIMIT 10;
+## Read the references only when needed
 
--- Combined: full-text OR fuzzy (comprehensive search)
-SELECT DISTINCT ON (id) id, name, ts_rank(search_vec, query) AS rank
-FROM products, websearch_to_tsquery('english', $1) AS query
-WHERE search_vec @@ query
-   OR name % $1
-ORDER BY id, rank DESC;
-```
+- Advanced patterns: [`patterns/README.md`](patterns/README.md)
+- Migration playbooks: [`migrations/README.md`](migrations/README.md)
+- Failure patterns: [`anti-patterns/README.md`](anti-patterns/README.md)
+- Preserved pre-refactor skill: [`references/SKILL.pre-2026-08-15.md`](references/SKILL.pre-2026-08-15.md)
+- Verification matrix and source dates: [`VERIFICATION.md`](VERIFICATION.md)
+- Reproducible eval cases: [`evals/cases.jsonl`](evals/cases.jsonl)
 
----
+## Required verification before a recommendation
 
-### 5. Vector / Semantic Search → `pgvector`
-
-```sql
--- Replaces: Pinecone, Weaviate, Chroma, Qdrant, Milvus
-
-CREATE EXTENSION IF NOT EXISTS vector;
-
-CREATE TABLE embeddings (
-  id          BIGSERIAL PRIMARY KEY,
-  source_type TEXT NOT NULL,                   -- 'document', 'product', 'message'
-  source_id   BIGINT NOT NULL,
-  chunk_index INT NOT NULL DEFAULT 0,          -- for chunked documents
-  content     TEXT NOT NULL,
-  embedding   vector(1536),                   -- OpenAI / Cohere / custom
-  metadata    JSONB NOT NULL DEFAULT '{}',
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (source_type, source_id, chunk_index)
-);
-
--- HNSW index: approximate nearest-neighbor search; benchmark recall, build time,
--- memory, and p95 latency on your own vector count and dimensions.
-CREATE INDEX idx_embeddings_hnsw ON embeddings
-  USING hnsw (embedding vector_cosine_ops)
-  WITH (m = 16, ef_construction = 64);        -- tune m for recall vs speed
-
--- Semantic search
-SELECT
-  source_type, source_id, content,
-  1 - (embedding <=> $1::vector) AS cosine_similarity,
-  metadata
-FROM embeddings
-WHERE source_type = 'document'                -- optional filter
-ORDER BY embedding <=> $1::vector
-LIMIT 5;
-
--- Hybrid search: semantic + keyword (RAG best practice)
-WITH semantic AS (
-  SELECT source_id, 1 - (embedding <=> $1::vector) AS score
-  FROM embeddings ORDER BY embedding <=> $1::vector LIMIT 20
-),
-keyword AS (
-  SELECT id AS source_id, ts_rank(search_vec, query) AS score
-  FROM documents, websearch_to_tsquery('english', $2) AS query
-  WHERE search_vec @@ query LIMIT 20
-)
-SELECT COALESCE(s.source_id, k.source_id) AS id,
-       COALESCE(s.score, 0) * 0.7 + COALESCE(k.score, 0) * 0.3 AS hybrid_score
-FROM semantic s FULL JOIN keyword k USING (source_id)
-ORDER BY hybrid_score DESC
-LIMIT 5;
-```
-
----
-
-### 6. Real-Time / Pub-Sub → `LISTEN / NOTIFY`
-
-```sql
--- Replaces: Redis pub/sub, Ably, Pusher, Socket.io server-side state
-
--- Publish from anywhere in the app or a trigger
-SELECT pg_notify('orders', json_build_object(
-  'event', 'new_order',
-  'order_id', NEW.id,
-  'amount', NEW.amount
-)::text);
-
--- Trigger-based: automatic on table change
-CREATE OR REPLACE FUNCTION notify_order_change() RETURNS TRIGGER AS $$
-BEGIN
-  PERFORM pg_notify('orders', json_build_object(
-    'event', TG_OP,
-    'id', NEW.id,
-    'status', NEW.status
-  )::text);
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_orders_notify
-  AFTER INSERT OR UPDATE ON orders
-  FOR EACH ROW EXECUTE FUNCTION notify_order_change();
-```
-
-`LISTEN/NOTIFY` is a transient wake-up signal, not a durable queue: payloads are
-delivered after commit, are not replayed for disconnected consumers, and should
-normally point listeners to durable rows stored in a table.
-
-```python
-# Python listener (asyncpg) — replaces Redis subscriber
-import asyncio, asyncpg, json
-
-async def listen():
-    conn = await asyncpg.connect(DSN)
-    await conn.add_listener('orders', lambda *args: handle(args[3]))
-    await asyncio.sleep(float('inf'))
-
-def handle(payload: str):
-    event = json.loads(payload)
-    print(f"Order {event['id']} → {event['status']}")
-```
-
----
-
-### 7. Multi-Tenant Isolation → Row Level Security
-
-```sql
--- The authorization logic belongs to the data layer, not the middleware.
-
-ALTER TABLE invoices ENABLE ROW LEVEL SECURITY;
-ALTER TABLE users    ENABLE ROW LEVEL SECURITY;
-ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
-ALTER TABLE invoices FORCE ROW LEVEL SECURITY;
-
--- Tenant isolation: each row is owned by a tenant
-CREATE POLICY tenant_isolation ON invoices
-  USING (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid)
-  WITH CHECK (tenant_id = NULLIF(current_setting('app.tenant_id', true), '')::uuid);
-
--- Role-based access within a tenant
-CREATE POLICY role_write ON invoices
-  FOR INSERT WITH CHECK (
-    NULLIF(current_setting('app.tenant_id', true), '')::uuid = tenant_id AND
-    current_setting('app.role', true) IN ('admin', 'accountant')
-  );
-
--- Application sets context before every query:
--- SET LOCAL app.tenant_id = 'acme-corp-uuid';
--- SET LOCAL app.role = 'accountant';
-
--- Performance: index on tenant_id is mandatory with RLS
-CREATE INDEX idx_invoices_tenant ON invoices (tenant_id);
-CREATE INDEX idx_users_tenant    ON users (tenant_id);
-```
-
----
-
-### 8. Audit Trail → Temporal Tables
-
-```sql
--- Replaces: event sourcing services, audit SaaS, custom log tables
-
--- Automatic history on any table
-CREATE TABLE orders_history (LIKE orders INCLUDING ALL);
-ALTER TABLE orders_history
-  ADD COLUMN changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  ADD COLUMN changed_by TEXT,
-  ADD COLUMN change_type TEXT CHECK (change_type IN ('INSERT','UPDATE','DELETE'));
-
-CREATE OR REPLACE FUNCTION audit_orders() RETURNS TRIGGER AS $$
-BEGIN
-  INSERT INTO orders_history
-  SELECT OLD.*, NOW(), current_setting('app.user_email', true), TG_OP;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
-CREATE TRIGGER trg_orders_audit
-  AFTER UPDATE OR DELETE ON orders
-  FOR EACH ROW EXECUTE FUNCTION audit_orders();
-
--- Query: who changed order #42 and when?
-SELECT changed_at, changed_by, change_type, status, amount
-FROM orders_history
-WHERE id = 42
-ORDER BY changed_at DESC;
-```
-
----
-
-## HOW THIS SKILL RESPONDS
-
-For every architecture question, structure the answer as:
-
-### 🔍 Scale Check
-Answer the 3 Rule Zero questions. Verdict: PostgreSQL-First or justified exception.
-
-### 🔧 Native Pattern
-The specific PostgreSQL feature/extension that replaces the requested service.
-
-### 💻 Production Code
-Complete, copy-paste ready SQL/code. Zero placeholders. Zero "TODO: implement this".
-
-### 📊 ROI
-- **Monthly cost eliminated**: $X in removed services
-- **Complexity reduction**: N services → 1
-- **Ops benefit**: unified backup, monitoring, alerting
-
-### ⚠️ Honest Limits
-When PostgreSQL genuinely cannot compete and a specific threshold where external services are justified.
-
----
-
-## ARCHITECTURE AUDIT CHECKLIST
-
-When reviewing an existing system:
-
-```
-□ How many distinct data services? (target: ≤ 2)
-□ Is Redis used only for reconstructible cache/session data? → Evaluate UNLOGGED TABLE
-□ Is Redis used for a modest durable work queue? → Evaluate FOR UPDATE SKIP LOCKED
-□ Is MongoDB used for flexible schema? → Replace with JSONB
-□ Is Elasticsearch used for < 10M docs? → Replace with tsvector + pg_trgm
-□ Is Pinecone/Chroma used? → Benchmark pgvector against current recall and latency
-□ Are n8n/Celery/Airflow used for simple jobs? → Evaluate pg_cron + job_queue
-□ Is RLS enabled on all tenant-scoped tables?
-□ Is pg_cron installed for recurring tasks?
-□ Are Materialized Views used instead of app-level caching?
-□ Is LISTEN/NOTIFY used only for transient wake-ups backed by durable rows?
-□ Are partial indexes used on filtered queries?
-□ Is BRIN used on append-only timestamp columns?
-□ Is connection pooling configured (PgBouncer in transaction mode)?
-```
-
----
-
-## EXTENSIONS REFERENCE
-
-| Extension | Replaces | Install |
-|---|---|---|
-| `pg_trgm` | Algolia, Typesense | Built-in (enable only) |
-| `tsvector` | Elasticsearch | Built-in (always available) |
-| `pgvector` | Pinecone, Chroma, Weaviate | `CREATE EXTENSION vector` |
-| `pg_cron` | Celery beat, APScheduler, n8n | Requires install |
-| `PostGIS` | Google Maps API, geocoding SaaS | `CREATE EXTENSION postgis` |
-| `pg_partman` | Custom partition management | Requires install |
-| `unaccent` | Custom accent stripping | Built-in (enable only) |
-| `uuid-ossp` | UUID generation service | Built-in (enable only) |
-| `pg_stat_statements` | APM query analysis | Built-in (enable only) |
-
----
-
-## JUSTIFIED EXCEPTIONS
-
-PostgreSQL is NOT the right answer in these specific cases:
-
-| Case | Justified external service | Required threshold |
-|---|---|---|
-| Real-time pub/sub > 100k msg/sec | Redis Streams, Kafka | *Measured* traffic, not estimated |
-| OLAP on > 1TB, complex analytics | ClickHouse, BigQuery | Measured slow queries on PG |
-| Email deliverability | SendGrid, Postmark | Always (IP reputation) |
-| Video/audio streaming | CDN (Cloudflare, Fastly) | Always |
-| Global edge caching < 10ms | Cloudflare KV, Deno Deploy | < 50ms acceptable → PG |
-| ML model serving | Dedicated inference service | Always |
-
-**The key word is *measured*. Most "we'll need it when we scale" decisions are made before a single user exists.**
-
----
-
-*See `migrations/` for step-by-step migration guides from Redis, MongoDB, n8n, and Elasticsearch.*  
-*See `patterns/` for advanced patterns: connection pooling, partitioning, observability.*  
-*See `anti-patterns/` for the 10 most common PostgreSQL mistakes and how to fix them.*
+1. Run `python scripts/validate_skill.py`.
+2. Run the PostgreSQL runtime tests in `tests/` against PostgreSQL 18 or the target production major.
+3. Record measured workload evidence and provider constraints.
+4. State any untested property as `NOT_PROVEN`.
+5. Re-run validation after changing PostgreSQL major versions, extensions, or referenced upstream behavior.
