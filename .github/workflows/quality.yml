@@ -46,7 +46,12 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     env:
-      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/skilltest
+      PGHOST: 127.0.0.1
+      PGPORT: "5432"
+      PGDATABASE: skilltest
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      DATABASE_URL: postgresql://postgres@127.0.0.1:5432/skilltest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install PostgreSQL client
