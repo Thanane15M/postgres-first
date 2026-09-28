@@ -1,6 +1,6 @@
 # Verification matrix
 
-Last evidence review: **2026-08-15**.
+Last evidence review: **2026-09-28**.
 
 This file separates documentation claims from runtime proof. A claim is `VERIFIED` only for the scope named below; broader production suitability still depends on the target workload.
 
@@ -13,6 +13,7 @@ This file separates documentation claims from runtime proof. A claim is `VERIFIE
 | SQL examples parse | VERIFIED_IN_CI | `scripts/validate_markdown.py` parses fenced SQL with `pglast`; this is syntax evidence only. |
 | Core PostgreSQL-native examples execute on PostgreSQL 18 | VERIFIED_IN_CI when quality job is green | `tests/runtime.sql`. |
 | Queue consumers skip an already locked row | VERIFIED_IN_CI when quality job is green | `tests/queue_concurrency.sh`. |
+| Version-pinned workflow state, expired-lease takeover, step/effect idempotency and stable replay ordering execute on PostgreSQL 18 | VERIFIED_IN_CI when quality job is green | `tests/workflow_replay.sql`; scope is the relational invariants, not equivalence to a dedicated workflow engine. |
 | A specific production workload meets its SLO on PostgreSQL | NOT_PROVEN by this repository | Requires representative application load, provider configuration, extensions, data and failure tests. |
 
 ## Source-of-truth references
@@ -20,6 +21,7 @@ This file separates documentation claims from runtime proof. A claim is `VERIFIE
 - PostgreSQL 18 `SELECT` / locking documentation: `https://www.postgresql.org/docs/18/sql-select.html`
 - PostgreSQL 18 connection settings: `https://www.postgresql.org/docs/18/runtime-config-connection.html`
 - PostgreSQL 18 `pg_stat_statements`: `https://www.postgresql.org/docs/18/pgstatstatements.html`
+- Comparative durable-workflow design input reviewed 2026-09-28: `https://github.com/vercel/workflow/releases` (used as design evidence only; no runtime dependency or copied implementation)
 
 ## Re-verification triggers
 
