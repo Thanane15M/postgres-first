@@ -142,7 +142,13 @@ A queue pattern is not complete with `SKIP LOCKED` alone. Define:
 - backpressure;
 - shutdown behavior.
 
-## 10. Extension assumptions
+## 10. Durable workflow replay
+
+For workflows that must survive worker crashes, retries, waits and deployments, pin a specification version at run creation, keep durable execution state in logged tables, use expiring leases for worker ownership, and deduplicate external effects with stable idempotency keys/outbox rows. Do not silently replay an old run under the newest code.
+
+See [`durable-workflow-replay.md`](durable-workflow-replay.md) for the full pattern and failure-test contract.
+
+## 11. Extension assumptions
 
 `pg_cron`, `pgvector`, PostGIS and `pg_partman` may not be installed or permitted by a managed provider. Treat extension availability as an environment capability and verify it before prescribing a pattern.
 
