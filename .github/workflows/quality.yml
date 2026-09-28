@@ -62,3 +62,5 @@ jobs:
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/runtime.sql
       - name: Prove SKIP LOCKED concurrency
         run: bash tests/queue_concurrency.sh "$DATABASE_URL"
+      - name: Prove durable workflow replay invariants
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/workflow_replay.sql
