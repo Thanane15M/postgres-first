@@ -129,6 +129,10 @@ RETURNING id;
 
 No returned row means the event was already accepted.
 
+### Durable workflow replay
+
+When a workflow must survive retries, crashes or deployments, persist the run's specification version, resumable state and externally relevant receipts. Use expiring execution leases and stable idempotency keys for side effects; never replay an unfinished old run implicitly under the newest code. See [`patterns/durable-workflow-replay.md`](patterns/durable-workflow-replay.md).
+
 ### Cache
 
 Use reconstructible cache tables only when losing them is acceptable. `UNLOGGED` tables are not durable and are not replicated to standbys; never use them for authoritative state.
