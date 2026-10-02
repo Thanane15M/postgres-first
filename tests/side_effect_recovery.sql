@@ -216,7 +216,11 @@ SELECT pf_effect_recovery.recover_after_crash(:nonreplay_id) = 'INTERRUPTED' AS 
 DO $$
 BEGIN
   BEGIN
-    PERFORM pf_effect_recovery.begin_execution(:nonreplay_id);
+    PERFORM pf_effect_recovery.begin_execution((
+      SELECT effect_id
+      FROM pf_effect_recovery.effect_intents
+      WHERE run_id='run-3' AND effect_key='publish'
+    ));
     RAISE EXCEPTION 'non-replayable effect executed twice';
   EXCEPTION WHEN SQLSTATE '55000' THEN
     NULL;
