@@ -203,7 +203,7 @@ SELECT pf_temporal.record_fact('scanner','SECURITY_SCAN','rev-1','pass');
 
 -- Two independent clients append requests concurrently. The advisory transaction
 -- lock is the linearization point.
-\! bash -c 'psql "$DATABASE_URL" -Atq -v ON_ERROR_STOP=1 -c "SELECT pf_temporal.record_action_request('''agent-a''','''git_push''','''rev-1''');" >/tmp/pf-temporal-a & p1=$!; psql "$DATABASE_URL" -Atq -v ON_ERROR_STOP=1 -c "SELECT pf_temporal.record_action_request('''agent-b''','''git_push''','''rev-1''');" >/tmp/pf-temporal-b & p2=$!; wait "$p1"; wait "$p2"'
+\! bash -c 'psql "$DATABASE_URL" -Atq -v ON_ERROR_STOP=1 -c "SELECT pf_temporal.record_action_request(\$\$agent-a\$\$,\$\$git_push\$\$,\$\$rev-1\$\$);" >/tmp/pf-temporal-a & p1=$!; psql "$DATABASE_URL" -Atq -v ON_ERROR_STOP=1 -c "SELECT pf_temporal.record_action_request(\$\$agent-b\$\$,\$\$git_push\$\$,\$\$rev-1\$\$);" >/tmp/pf-temporal-b & p2=$!; wait "$p1"; wait "$p2"'
 
 SELECT event_id AS req_a
 FROM pf_temporal.ledger
@@ -223,7 +223,7 @@ SELECT :req_a::bigint <> :req_b::bigint AS distinct_requests \gset
 \endif
 
 -- Evaluate both requests concurrently. There must be one decision per request.
-\! bash -c 'psql "$DATABASE_URL" -Atq -v ON_ERROR_STOP=1 -c "SELECT allowed FROM pf_temporal.evaluate_action_request((SELECT event_id FROM pf_temporal.ledger WHERE event_type='''ACTION_REQUEST''' AND actor='''agent-a''' ORDER BY event_id DESC LIMIT 1));" >/tmp/pf-temporal-da & p1=$!; psql "$DATABASE_URL" -Atq -v ON_ERROR_STOP=1 -c "SELECT allowed FROM pf_temporal.evaluate_action_request((SELECT event_id FROM pf_temporal.ledger WHERE event_type='''ACTION_REQUEST''' AND actor='''agent-b''' ORDER BY event_id DESC LIMIT 1));" >/tmp/pf-temporal-db & p2=$!; wait "$p1"; wait "$p2"'
+\! bash -c 'psql "$DATABASE_URL" -Atq -v ON_ERROR_STOP=1 -c "SELECT allowed FROM pf_temporal.evaluate_action_request((SELECT event_id FROM pf_temporal.ledger WHERE event_type=\$\$ACTION_REQUEST\$\$ AND actor=\$\$agent-a\$\$ ORDER BY event_id DESC LIMIT 1));" >/tmp/pf-temporal-da & p1=$!; psql "$DATABASE_URL" -Atq -v ON_ERROR_STOP=1 -c "SELECT allowed FROM pf_temporal.evaluate_action_request((SELECT event_id FROM pf_temporal.ledger WHERE event_type=\$\$ACTION_REQUEST\$\$ AND actor=\$\$agent-b\$\$ ORDER BY event_id DESC LIMIT 1));" >/tmp/pf-temporal-db & p2=$!; wait "$p1"; wait "$p2"'
 
 SELECT count(*)=2 AS two_allowed_decisions
 FROM pf_temporal.ledger
