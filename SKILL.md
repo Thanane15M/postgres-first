@@ -133,6 +133,14 @@ No returned row means the event was already accepted.
 
 When a workflow must survive retries, crashes or deployments, persist the run's specification version, resumable state and externally relevant receipts. Use expiring execution leases and stable idempotency keys for side effects; never replay an unfinished old run implicitly under the newest code. See [`patterns/durable-workflow-replay.md`](patterns/durable-workflow-replay.md).
 
+### Durable external side effects
+
+A reclaimed workflow lease does not make every unfinished mutation safe to execute again. Commit the effect intent first, classify it as `REPLAY_SAFE`, `IDEMPOTENT_WITH_KEY`, `NON_REPLAYABLE`, or `UNKNOWN_SIDE_EFFECT`, and fail closed to interruption/reconciliation when the remote outcome is uncertain. See [`patterns/durable-side-effect-recovery.md`](patterns/durable-side-effect-recovery.md).
+
+### Temporal authorization
+
+When permission depends on prior outcomes, use an ordered durable ledger rather than model memory or mutable current state. Persist the action request, evaluate against the policy version active at that request, bind evidence to the exact revision/tenant, and keep the enforcement point outside the model. See [`patterns/temporal-authorization.md`](patterns/temporal-authorization.md).
+
 ### Cache
 
 Use reconstructible cache tables only when losing them is acceptable. `UNLOGGED` tables are not durable and are not replicated to standbys; never use them for authoritative state.

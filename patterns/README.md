@@ -148,7 +148,19 @@ For workflows that must survive worker crashes, retries, waits and deployments, 
 
 See [`durable-workflow-replay.md`](durable-workflow-replay.md) for the full pattern and failure-test contract.
 
-## 11. Extension assumptions
+## 11. Durable side-effect recovery
+
+For external effects, persist intent before execution and classify replay safety explicitly. Use `REPLAY_SAFE`, `IDEMPOTENT_WITH_KEY`, `NON_REPLAYABLE`, or `UNKNOWN_SIDE_EFFECT`; an expired worker lease never makes an unsafe side effect replayable.
+
+See [`durable-side-effect-recovery.md`](durable-side-effect-recovery.md).
+
+## 12. Temporal authorization
+
+For actions whose permission depends on prior evidence, persist ordered facts and the action request before evaluating policy. Version policy activation in the same ledger, keep historical decisions immutable, and keep any optimized current-state projection reconstructible.
+
+See [`temporal-authorization.md`](temporal-authorization.md).
+
+## 13. Extension assumptions
 
 `pg_cron`, `pgvector`, PostGIS and `pg_partman` may not be installed or permitted by a managed provider. Treat extension availability as an environment capability and verify it before prescribing a pattern.
 

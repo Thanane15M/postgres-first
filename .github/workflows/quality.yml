@@ -64,3 +64,7 @@ jobs:
         run: bash tests/queue_concurrency.sh "$DATABASE_URL"
       - name: Prove durable workflow replay invariants
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/workflow_replay.sql
+      - name: Prove durable side-effect recovery invariants
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/side_effect_recovery.sql
+      - name: Prove temporal authorization invariants
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/temporal_authorization.sql
