@@ -67,7 +67,7 @@ CREATE TABLE effect_intents (
   replay_class text NOT NULL
     CHECK (replay_class IN (
       'REPLAY_SAFE',
-      'IDEMPOTENT_WITH_KEY`,
+      'IDEMPOTENT_WITH_KEY',
       'NON_REPLAYABLE',
       'UNKNOWN_SIDE_EFFECT'
     )),
