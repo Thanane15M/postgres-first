@@ -1,6 +1,6 @@
 # Verification matrix
 
-Last evidence review: **2026-09-28**.
+Last evidence review: **2026-10-02**.
 
 This file separates documentation claims from runtime proof. A claim is `VERIFIED` only for the scope named below; broader production suitability still depends on the target workload.
 
@@ -14,6 +14,8 @@ This file separates documentation claims from runtime proof. A claim is `VERIFIE
 | Core PostgreSQL-native examples execute on PostgreSQL 18 | VERIFIED_IN_CI when quality job is green | `tests/runtime.sql`. |
 | Queue consumers skip an already locked row | VERIFIED_IN_CI when quality job is green | `tests/queue_concurrency.sh`. |
 | Version-pinned workflow state, expired-lease takeover, step/effect idempotency and stable replay ordering execute on PostgreSQL 18 | VERIFIED_IN_CI when quality job is green | `tests/workflow_replay.sql`; scope is the relational invariants, not equivalence to a dedicated workflow engine. |
+| Unsafe external effects are not made replayable merely by crash recovery; replay-safe/idempotent/interrupt/reconcile classes execute on PostgreSQL 18 | VERIFIED_IN_CI when quality job is green | `tests/side_effect_recovery.sql`; scope is the durable classification/state transition contract, not any specific provider's idempotency guarantee. |
+| Ordered action requests, policy-version pinning at request time, concurrent request/evaluation serialization and fail-closed temporal decisions execute on PostgreSQL 18 | VERIFIED_IN_CI when quality job is green | `tests/temporal_authorization.sql`; event provenance and enforcement outside this reference schema remain deployment responsibilities. |
 | A specific production workload meets its SLO on PostgreSQL | NOT_PROVEN by this repository | Requires representative application load, provider configuration, extensions, data and failure tests. |
 
 ## Source-of-truth references
@@ -22,6 +24,8 @@ This file separates documentation claims from runtime proof. A claim is `VERIFIE
 - PostgreSQL 18 connection settings: `https://www.postgresql.org/docs/18/runtime-config-connection.html`
 - PostgreSQL 18 `pg_stat_statements`: `https://www.postgresql.org/docs/18/pgstatstatements.html`
 - Comparative durable-workflow design input reviewed 2026-09-28: `https://github.com/vercel/workflow/releases` (used as design evidence only; no runtime dependency or copied implementation)
+- Comparative durable-effect design input reviewed 2026-10-02: `https://github.com/earendil-works/pi/tree/main/packages/durable` (design evidence only; no runtime dependency or copied implementation)
+- Comparative temporal-authorization design input reviewed 2026-10-02: `https://github.com/dogwood-policy/dogwood-local-engine` (design evidence only; provenance/enforcement remain explicit boundaries)
 
 ## Re-verification triggers
 
