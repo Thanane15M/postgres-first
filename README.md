@@ -52,7 +52,12 @@ With PostgreSQL 18 available as `DATABASE_URL`:
 ```bash
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/runtime.sql
 bash tests/queue_concurrency.sh "$DATABASE_URL"
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/workflow_replay.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/side_effect_recovery.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/temporal_authorization.sql
 ```
+
+**Safety:** use only a disposable PostgreSQL 18 test database for these commands. The fixtures create and modify database objects; do not run them against production.
 
 GitHub Actions runs the same quality gates on pushes and pull requests.
 
