@@ -142,6 +142,15 @@ A queue pattern is not complete with `SKIP LOCKED` alone. Define:
 - backpressure;
 - shutdown behavior.
 
+
+### Transactional enqueue and stale-worker fencing
+
+When a business write and its background job must be accepted atomically, insert both inside the same PostgreSQL transaction. A rollback must remove both; a commit must preserve both.
+
+For reclaimable processing leases, use a monotonically increasing lease/fence token. Completion or failure updates must match both the job identity and the current token. A worker holding an older token must update zero rows after another worker reclaims the job.
+
+This proves the database fencing invariant only. External side effects still require their own idempotency, reconciliation, or compensation semantics; PostgreSQL fencing does not create exactly-once delivery.
+
 ## 10. Durable workflow replay
 
 For workflows that must survive worker crashes, retries, waits and deployments, pin a specification version at run creation, keep durable execution state in logged tables, use expiring leases for worker ownership, and deduplicate external effects with stable idempotency keys/outbox rows. Do not silently replay an old run under the newest code.
