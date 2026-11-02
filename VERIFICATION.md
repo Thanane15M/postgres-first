@@ -18,6 +18,8 @@ This file separates documentation claims from runtime proof. A claim is `VERIFIE
 | Ordered action requests, policy-version pinning at request time, concurrent request/evaluation serialization and fail-closed temporal decisions execute on PostgreSQL 18 | VERIFIED_IN_CI when quality job is green | `tests/temporal_authorization.sql`; event provenance and enforcement outside this reference schema remain deployment responsibilities. |
 | A specific production workload meets its SLO on PostgreSQL | NOT_PROVEN by this repository | Requires representative application load, provider configuration, extensions, data and failure tests. |
 
+| Transactional enqueue and stale-worker fencing | VERIFIED_IN_CI when green | `tests/queue_fencing.sql` proves rollback/commit coupling and rejects completion from a stale lease token. External side effects remain governed by their own idempotency/reconciliation semantics. |
+
 ## Source-of-truth references
 
 - PostgreSQL 18 `SELECT` / locking documentation: `https://www.postgresql.org/docs/18/sql-select.html`
