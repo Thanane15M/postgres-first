@@ -24,6 +24,7 @@ For runtime checks, provide a PostgreSQL 18 `DATABASE_URL`:
 ```bash
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/runtime.sql
 bash tests/queue_concurrency.sh "$DATABASE_URL"
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/queue_fencing.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/workflow_replay.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/side_effect_recovery.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/temporal_authorization.sql
