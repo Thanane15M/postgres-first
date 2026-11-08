@@ -29,11 +29,13 @@ BEGIN
   END IF;
 END $$;
 
--- Transactional enqueue: commit path persists both in the same transaction scope.
+-- Transactional enqueue: commit both rows, then recheck in a new transaction.
 INSERT INTO business_rows (id, payload) VALUES (2, 'commit');
 INSERT INTO fenced_jobs (business_id) VALUES (2);
+COMMIT;
+BEGIN;
 
-DO $$
+DO $
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM business_rows WHERE id = 2)
      OR NOT EXISTS (SELECT 1 FROM fenced_jobs WHERE business_id = 2) THEN
