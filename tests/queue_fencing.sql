@@ -35,7 +35,7 @@ INSERT INTO fenced_jobs (business_id) VALUES (2);
 COMMIT;
 BEGIN;
 
-DO $
+DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM business_rows WHERE id = 2)
      OR NOT EXISTS (SELECT 1 FROM fenced_jobs WHERE business_id = 2) THEN
