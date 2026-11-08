@@ -61,16 +61,20 @@ WHERE business_id = 2
 RETURNING lease_token;
 
 -- A stale completion with token 1 must update zero rows.
-WITH stale AS (
+DO $$
+DECLARE
+  affected_rows bigint;
+BEGIN
   UPDATE fenced_jobs
   SET status = 'done'
   WHERE business_id = 2
     AND status = 'processing'
-    AND lease_token = 1
-  RETURNING 1
-)
-SELECT CASE WHEN count(*) = 0 THEN 1 ELSE CAST('stale worker completion accepted' AS integer) END
-FROM stale;
+    AND lease_token = 1;
+  GET DIAGNOSTICS affected_rows = ROW_COUNT;
+  IF affected_rows <> 0 THEN
+    RAISE EXCEPTION 'stale worker completion accepted';
+  END IF;
+END $$;
 
 -- Current worker B with token 2 may complete.
 UPDATE fenced_jobs
